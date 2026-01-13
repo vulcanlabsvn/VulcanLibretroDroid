@@ -31,7 +31,6 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.coroutineScope
-import com.swordfish.libretrodroid.KtUtils.awaitUninterruptibly
 import com.swordfish.libretrodroid.gamepad.GamepadsManager
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.GlobalScope
@@ -57,26 +56,34 @@ class GLRetroView(
     }
 
     var audioEnabled: Boolean by Delegates.observable(true) { _, _, value ->
-        catchExceptions {
-            LibretroDroid.setAudioEnabled(value)
+        queueEvent {
+            catchExceptions {
+                LibretroDroid.setAudioEnabled(value)
+            }
         }
     }
 
     var frameSpeed: Int by Delegates.observable(1) { _, _, value ->
-        catchExceptions {
-            LibretroDroid.setFrameSpeed(value)
+        queueEvent {
+            catchExceptions {
+                LibretroDroid.setFrameSpeed(value)
+            }
         }
     }
 
     var shader: ShaderConfig by Delegates.observable(data.shader) { _, _, value ->
-        catchExceptions {
-            LibretroDroid.setShaderConfig(buildShader(value))
+        queueEvent {
+            catchExceptions {
+                LibretroDroid.setShaderConfig(buildShader(value))
+            }
         }
     }
 
     var viewport: RectF by Delegates.observable(RectF(0f, 0f, 1f, 1f)) { _, _, value ->
-        runOnGLThread {
-            LibretroDroid.setViewport(value.left, value.top, value.width(), value.height())
+        queueEvent {
+            catchExceptions {
+                LibretroDroid.setViewport(value.left, value.top, value.width(), value.height())
+            }
         }
     }
 
@@ -99,28 +106,37 @@ class GLRetroView(
             preserveEGLContextOnPause = true
             setEGLContextClientVersion(openGLESVersion)
             setRenderer(Renderer())
+            // This ensures the GL thread doesn't block the main thread during surface changes
+            renderMode = RENDERMODE_CONTINUOUSLY
             keepScreenOn = true
         }
     }
 
     override fun onCreate(owner: LifecycleOwner) = catchExceptions {
         lifecycle = owner.lifecycle
-        LibretroDroid.create(
-            openGLESVersion,
-            data.coreFilePath,
-            data.systemDirectory,
-            data.savesDirectory,
-            data.variables,
-            buildShader(data.shader),
-            getDefaultRefreshRate(),
-            data.preferLowLatencyAudio,
-            data.gameVirtualFiles.isNotEmpty(),
-            data.enableMicrophone,
-            data.skipDuplicateFrames,
-            data.immersiveMode,
-            getDeviceLanguage()
-        )
-        LibretroDroid.setRumbleEnabled(data.rumbleEventsEnabled)
+        val refreshRate = getDefaultRefreshRate()
+        val language = getDeviceLanguage()
+        val shader = buildShader(data.shader)
+        queueEvent {
+            catchExceptions {
+                LibretroDroid.create(
+                    openGLESVersion,
+                    data.coreFilePath,
+                    data.systemDirectory,
+                    data.savesDirectory,
+                    data.variables,
+                    shader,
+                    refreshRate,
+                    data.preferLowLatencyAudio,
+                    data.gameVirtualFiles.isNotEmpty(),
+                    data.enableMicrophone,
+                    data.skipDuplicateFrames,
+                    data.immersiveMode,
+                    language
+                )
+                LibretroDroid.setRumbleEnabled(data.rumbleEventsEnabled)
+            }
+        }
     }
 
     override fun onDestroy(owner: LifecycleOwner) = catchExceptions {
@@ -136,8 +152,14 @@ class GLRetroView(
     } ?: ""
 
     private fun getDefaultRefreshRate() = catchExceptionsWithResult {
-        (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.refreshRate
-    } ?: 0f
+        try {
+            val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+            windowManager?.defaultDisplay?.refreshRate ?: 60f
+        } catch (e: Exception) {
+            Log.w(TAG_LOG, "Error getting refresh rate, defaulting to 60fps", e)
+            60f // Default to 60fps
+        }
+    } ?: 60f
 
     fun sendKeyEvent(action: Int, keyCode: Int, port: Int = 0) = catchExceptions {
         queueEvent { LibretroDroid.onKeyEvent(port, action, keyCode) }
@@ -148,13 +170,22 @@ class GLRetroView(
     }
 
     override fun onTouchEvent(event: MotionEvent?): Boolean {
-        catchExceptions {
-            when (event?.actionMasked) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> normalizeTouchCoordinates(event.x, event.y)
-                MotionEvent.ACTION_UP -> TOUCH_EVENT_OUTSIDE
-                else -> null
-            }?.let { position ->
-                LibretroDroid.onTouchEvent(position.x, position.y)
+        // Touch events must be non-blocking - use queueEvent to avoid ANR
+        when (event?.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                val position = normalizeTouchCoordinates(event.x, event.y)
+                queueEvent {
+                    catchExceptions {
+                        LibretroDroid.onTouchEvent(position.x, position.y)
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                queueEvent {
+                    catchExceptions {
+                        LibretroDroid.onTouchEvent(TOUCH_EVENT_OUTSIDE.x, TOUCH_EVENT_OUTSIDE.y)
+                    }
+                }
             }
         }
         return true
@@ -209,27 +240,33 @@ class GLRetroView(
     }
 
     fun getControllers(): Array<Array<Controller>> {
-        return catchExceptionsWithResult {
+        // Use runOnGLThread with timeout to avoid blocking main thread
+        return runOnGLThread {
             LibretroDroid.getControllers()
         } ?: arrayOf(arrayOf())
     }
 
     fun setControllerType(port: Int, type: Int) {
-        catchExceptions {
-            LibretroDroid.setControllerType(port, type)
+        // Use queueEvent to avoid blocking - native calls must be async
+        queueEvent {
+            catchExceptions {
+                LibretroDroid.setControllerType(port, type)
+            }
         }
     }
 
     fun getVariables(): Array<Variable> {
-        return catchExceptionsWithResult {
+        return runOnGLThread {
             LibretroDroid.getVariables()
         } ?: arrayOf()
     }
 
     fun updateVariables(vararg variables: Variable) {
-        catchExceptions {
-            variables.forEach {
-                LibretroDroid.updateVariable(it)
+        queueEvent {
+            catchExceptions {
+                variables.forEach {
+                    LibretroDroid.updateVariable(it)
+                }
             }
         }
     }
@@ -241,11 +278,16 @@ class GLRetroView(
     fun changeDisk(index: Int) = runOnGLThread { LibretroDroid.changeDisk(index) }
 
     private fun getGLESVersion(context: Context): Int {
-        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        return if (activityManager.deviceConfigurationInfo.reqGlEsVersion >= 0x30000) {
+        return try {
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            if ((activityManager?.deviceConfigurationInfo?.reqGlEsVersion ?: 0) >= 0x30000) {
+                3
+            } else {
+                2
+            }
+        } catch (e: Exception) {
+            Log.w(TAG_LOG, "Error getting GLES version, defaulting to 3", e)
             3
-        } else {
-            2
         }
     }
 
@@ -322,21 +364,11 @@ class GLRetroView(
 
         override fun onPause(owner: LifecycleOwner) = catchExceptions {
             isEmulationReady = false
-            val latch = CountDownLatch(1)
-            
             queueEvent {
-                try {
+                catchExceptions {
                     LibretroDroid.pause()
-                } finally {
-                    latch.countDown()
                 }
             }
-
-            try {
-                latch.await(500, TimeUnit.MILLISECONDS)
-            } catch (e: InterruptedException) {
-            }
-
             onPause()
         }
     }
@@ -353,7 +385,11 @@ class GLRetroView(
 
         override fun onSurfaceChanged(gl: GL10, width: Int, height: Int) = catchExceptions {
             Thread.currentThread().priority = Thread.MAX_PRIORITY
-            LibretroDroid.onSurfaceChanged(width, height)
+            try {
+                LibretroDroid.onSurfaceChanged(width, height)
+            } catch (e: Exception) {
+                Log.e(TAG_LOG, "Error in onSurfaceChanged", e)
+            }
         }
 
 
@@ -457,7 +493,11 @@ class GLRetroView(
                 latch.countDown()
             }
 
-            latch.awaitUninterruptibly()
+            val success = latch.await(500, TimeUnit.MILLISECONDS)
+            if (!success) {
+                Log.w(TAG_LOG, "runOnGLThread timeout - GL thread may be busy, returning null")
+                return@catchExceptionsWithResult null
+            }
             result
         }
     }
@@ -548,8 +588,10 @@ class GLRetroView(
     }
 
     private fun refreshAspectRatio() {
-        runOnGLThread {
-            LibretroDroid.refreshAspectRatio()
+        queueEvent {
+            catchExceptions {
+                LibretroDroid.refreshAspectRatio()
+            }
         }
     }
 
