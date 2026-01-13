@@ -317,15 +317,10 @@ void LibretroDroid::loadGameFromPath(const std::string& gamePath) {
         game_info.size = 0;
     } else {
         struct Utils::ReadResult file = Utils::readFileAsBytes(gamePath);
-        if (!file.data) {
-            LOGE("Failed to read game file:");
-            throw std::runtime_error("Failed to read game file");
-        }
         game_info.data = file.data;
         game_info.size = file.size;
     }
 
-    core->retro_unload_game();
     bool result = core->retro_load_game(&game_info);
     if (!result) {
         LOGE("Cannot load game. Leaving.");
@@ -349,15 +344,10 @@ void LibretroDroid::loadGameFromBytes(const int8_t *data, size_t size) {
         game_info.data = nullptr;
         game_info.size = 0;
     } else {
-        if (!data || size == 0) {
-            LOGE("Error: Game data pointer is null or size is zero when fullpath is not needed.");
-            throw std::runtime_error("Invalid game data provided");
-        }
         game_info.data = data;
         game_info.size = size;
     }
 
-    core->retro_unload_game();
     bool result = core->retro_load_game(&game_info);
     if (!result) {
         LOGE("Cannot load game. Leaving.");
@@ -388,19 +378,17 @@ void LibretroDroid::loadGameFromVirtualFiles(std::vector<VFSFile> virtualFiles) 
 
     if (loadUsingVFS) {
         VFS::getInstance().initialize(std::move(virtualFiles));
+    }
+
+    if (loadUsingVFS) {
         game_info.data = nullptr;
         game_info.size = 0;
     } else {
         struct Utils::ReadResult file = Utils::readFileAsBytes(firstFileFD);
-        if (!file.data) {
-            LOGE("Error reading file '%s' (FD: %d).", firstFilePath.c_str(), firstFileFD);
-            throw std::runtime_error("Failed to read game file from descriptor.");
-        }
         game_info.data = file.data;
         game_info.size = file.size;
     }
 
-    core->retro_unload_game();
     bool result = core->retro_load_game(&game_info);
     if (!result) {
         LOGE("Cannot load game. Leaving.");
@@ -417,17 +405,8 @@ void LibretroDroid::destroy() {
         Environment::getInstance().getHwContextDestroy()();
     }
 
-    if (core != nullptr && core->retro_unload_game != nullptr) {
-        core->retro_unload_game();
-    } else {
-        LOGW("core or core->retro_unload_game is null, skipping unload.");
-    }
-
-    if (core != nullptr && core->retro_deinit != nullptr) {
-        core->retro_deinit();
-    } else {
-        LOGW("core or core->retro_deinit is null, skipping deinit.");
-    }
+    core->retro_unload_game();
+    core->retro_deinit();
 
     video = nullptr;
     core = nullptr;
@@ -441,37 +420,17 @@ void LibretroDroid::destroy() {
 
 void LibretroDroid::resume() {
     LOGD("Performing libretrodroid resume");
+
     input = std::make_unique<Input>();
-    if (!input) {
-        LOGE("Failed to create Input instance.");
-        throw std::runtime_error("Failed to initialize input system.");
-    }
 
-    if (fpsSync) {
-        LOGD("Resetting FPS synchronizer.");
-        fpsSync->reset();
-    } else {
-        LOGW("fpsSync is null, skipping reset.");
-    }
-
-    if (audio) {
-        LOGD("Starting audio playback.");
-        audio->start();
-    } else {
-        LOGW("audio is null, skipping start.");
-    }
-
+    fpsSync->reset();
+    audio->start();
     refreshAspectRatio();
 }
 
 void LibretroDroid::pause() {
     LOGD("Performing libretrodroid pause");
-    if (audio) {
-        LOGD("Stop audio playback.");
-        audio->stop();
-    } else {
-        LOGW("audio is null, skipping start.");
-    }
+    audio->stop();
 
     input = nullptr;
 }
