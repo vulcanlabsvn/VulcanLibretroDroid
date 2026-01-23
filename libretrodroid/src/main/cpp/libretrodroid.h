@@ -28,6 +28,7 @@
 #include <mutex>
 #include <memory>
 #include <optional>
+#include <atomic>
 
 #include "log.h"
 #include "core.h"
@@ -159,6 +160,7 @@ private:
     bool audioEnabled = true;
     bool preferLowLatencyAudio = false;
     bool rumbleEnabled = false;
+    std::atomic<bool> isPaused{true}; // Start paused until resume is called, atomic for thread safety
 
     ShaderManager::Config fragmentShaderConfig = ShaderManager::Config {
         ShaderManager::Type::SHADER_DEFAULT, { }

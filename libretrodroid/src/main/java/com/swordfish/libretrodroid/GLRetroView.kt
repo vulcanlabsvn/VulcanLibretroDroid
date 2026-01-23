@@ -363,22 +363,44 @@ class GLRetroView(
         }
 
         override fun onPause(owner: LifecycleOwner) = catchExceptions {
+            // Stop emulation immediately to prevent new frames
             isEmulationReady = false
+            
+            // Use a CountDownLatch with timeout to avoid ANR
+            val pauseLatch = CountDownLatch(1)
             queueEvent {
-                catchExceptions {
+                try {
                     LibretroDroid.pause()
+                } catch (e: Exception) {
+                    Log.e(TAG_LOG, "Error pausing core", e)
+                } finally {
+                    pauseLatch.countDown()
                 }
             }
+            
+            // Wait with timeout to avoid blocking main thread indefinitely
+            val success = pauseLatch.await(300, TimeUnit.MILLISECONDS)
+            if (!success) {
+                Log.w(TAG_LOG, "Pause operation timed out, proceeding with onPause anyway")
+            }
+            
+            // Call super.onPause() after attempting to pause the core
             onPause()
         }
     }
 
     inner class Renderer : GLSurfaceView.Renderer {
         override fun onDrawFrame(gl: GL10) = catchExceptions {
-            if (isEmulationReady) {
-                LibretroDroid.step(this@GLRetroView)
-                lifecycle?.coroutineScope?.launch {
-                    retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
+            // Check isEmulationReady to prevent running during pause/resume transitions
+            if (isEmulationReady && !isAborted) {
+                try {
+                    LibretroDroid.step(this@GLRetroView)
+                    lifecycle?.coroutineScope?.launch {
+                        retroGLEventsSubject.emit(GLRetroEvents.FrameRendered)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG_LOG, "Error in onDrawFrame/step", e)
+                    // Don't crash, just skip this frame
                 }
             }
         }
@@ -488,16 +510,26 @@ class GLRetroView(
 
             val latch = CountDownLatch(1)
             var result: T? = null
+            var exception: Exception? = null
+            
             queueEvent {
-                result = block()
-                latch.countDown()
+                try {
+                    result = block()
+                } catch (e: Exception) {
+                    exception = e
+                    Log.e(TAG_LOG, "Exception in runOnGLThread block", e)
+                } finally {
+                    latch.countDown()
+                }
             }
 
-            val success = latch.await(500, TimeUnit.MILLISECONDS)
+            val success = latch.await(1000, TimeUnit.MILLISECONDS)
             if (!success) {
-                Log.w(TAG_LOG, "runOnGLThread timeout - GL thread may be busy, returning null")
+                Log.w(TAG_LOG, "runOnGLThread timeout - GL thread may be busy or blocked, returning null")
                 return@catchExceptionsWithResult null
             }
+            
+            exception?.let { throw it }
             result
         }
     }
