@@ -421,6 +421,7 @@ void LibretroDroid::destroy() {
 void LibretroDroid::resume() {
     LOGD("Performing libretrodroid resume");
 
+    isPaused.store(false, std::memory_order_release);
     input = std::make_unique<Input>();
 
     fpsSync->reset();
@@ -430,12 +431,20 @@ void LibretroDroid::resume() {
 
 void LibretroDroid::pause() {
     LOGD("Performing libretrodroid pause");
+    isPaused.store(true, std::memory_order_release);
+    
     audio->stop();
 
     input = nullptr;
 }
 
 void LibretroDroid::step() {
+    // Early exit if paused to avoid ANR during pause operations
+    if (isPaused.load(std::memory_order_acquire)) {
+        LOGD("Skipping step() - emulation is paused");
+        return;
+    }
+
     LOGD("Stepping into retro_run()");
 
     unsigned frames = 1;
@@ -446,8 +455,14 @@ void LibretroDroid::step() {
         frames = std::min(requestedFrames, 2u);
     }
 
-    for (size_t i = 0; i < frames * frameSpeed; i++)
+    for (size_t i = 0; i < frames * frameSpeed; i++) {
+        // Check pause state before each frame to allow quick interruption
+        if (isPaused.load(std::memory_order_acquire)) {
+            LOGD("Emulation paused during step(), breaking out of retro_run loop");
+            break;
+        }
         core->retro_run();
+    }
 
     if (video && !video->rendersInVideoCallback()) {
         video->renderFrame();
