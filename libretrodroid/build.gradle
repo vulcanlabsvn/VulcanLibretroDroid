@@ -6,13 +6,21 @@ group='com.github.Swordfish90'
 
 android {
     namespace = "com.swordfish.libretrodroid"
-    compileSdkVersion 33
-    buildToolsVersion "29.0.3"
+    compileSdk 36
+    ndkVersion "29.0.14206865"
 
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
 
     defaultConfig {
-        minSdkVersion 21
-        targetSdkVersion 31
+        minSdk 21
+        targetSdk 36
         versionCode 1
         versionName "1.0"
 
@@ -22,7 +30,7 @@ android {
         externalNativeBuild {
             cmake {
                 // Available arguments are inside ${SDK}/cmake/.../android.toolchain.cmake file
-                arguments '-DANDROID_STL=c++_static'
+                arguments '-DANDROID_STL=c++_static', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
             }
         }
     }
@@ -62,7 +70,6 @@ publishing {
 
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.5.1'
 
     testImplementation 'junit:junit:4.13.2'

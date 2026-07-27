@@ -2,11 +2,24 @@ apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
 android {
-    compileSdkVersion 33
+    namespace 'com.android.libretrodroid'
+    compileSdk 36
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
     defaultConfig {
         applicationId 'com.android.gl2jni'
-        minSdkVersion 21
-        targetSdkVersion 33
+        minSdk 21
+        targetSdk 36
+        versionCode 1
+        versionName '1.0'
     }
 
     buildTypes {
@@ -21,7 +34,6 @@ android {
 dependencies {
     api project(path: ':libretrodroid')
     implementation "androidx.core:core-ktx:1.9.0"
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.5.1"
     implementation "androidx.appcompat:appcompat:1.5.1"
 
@@ -32,4 +44,3 @@ dependencies {
 repositories {
     mavenCentral()
 }
-
